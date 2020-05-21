@@ -25,8 +25,10 @@ class CPU:
         # set program counter to zero
         self.pc = 0
         self.halted = False
-        self.sp = 7
-        self.reg[self.sp] = 0xF4
+        self.reg[7] = 0xF4
+        self.flag = 0
+        self.inc_size = 1
+        # self.reg[self.sp] = 0xF4
         self.branchtable = {}
         self.branchtable[LDI] = self.handle_LDI
         self.branchtable[PRN] = self.handle_PRN
@@ -57,15 +59,14 @@ class CPU:
 
                     address += 1
         except FileNotFoundError:
-            print(f"{sys.argv[0]}: {filename} nog found")
+            print(f"{sys.argv[0]}: {filename} not found")
             sys.exit(2)
 
     def alu(self, op, reg_a, reg_b):
         """ALU operations."""
 
-        if op == "ADD":
-            self.reg[reg_a] += self.reg[reg_b]
-        # elif op == "SUB": etc
+        if op in self.branchtable:
+            self.branchtable[op](reg_a, reg_b)
         else:
             raise Exception("Unsupported ALU operation")
 
@@ -97,61 +98,64 @@ class CPU:
 
     def run(self):
         """Run the CPU."""
-        inc_size = 0
         while not self.halted:
             cmd = self.ram_read(self.pc)
+            self.inc_size = 1
             operand_a = self.ram_read(self.pc + 1)
             operand_b = self.ram_read(self.pc + 2)
+            covered_cmd = cmd & 0b001000000
+            is_alu = covered_cmd >> 5
+            moved_cmd = cmd >> 4
+            sets_pc = moved_cmd & 0b0001
 
-            if cmd in self.branchtable:
+            if is_alu:
+                self.alu(cmd, operand_a, operand_b)
+            elif cmd in self.branchtable:
                 self.branchtable[cmd](operand_a, operand_b)
             else:
-                raise Exception(f"invalid instruction")
+                print(f"Invalid Instruction {cmd}")
+                sys.exit(2)
+
+            if not sets_pc:
+                self.inc_size += cmd >> 6
+                self.pc += self.inc_size
 
     def handle_HLT(self, opr1, opr2):
-        self.halted = True
-        sys.exit(-1)
+        # self.halted = True
+        sys.exit(0)
 
     def handle_PRN(self, opr1, opr2):
-        reg_index = opr1
-        num = self.reg[reg_index]
+        # reg_index = opr1
+        num = self.reg[opr1]
         print(num)
-        inc_size = 2
+        # inc_size = 2
 
     def handle_LDI(self, opr1, opr2):
-        reg_index = opr1
-        num = self.reg[reg_index]
-        print(num)
-        inc_size = 2
+        self.reg[opr1] = opr2
 
-    def handle_ADD(self, opr1, opr2):
-        self.alu("ADD", opr1, opr2)
-        inc_size = 3
+    def handle_ADD(self, reg_a, reg_b):
+        self.reg[reg_a] += self.reg[reg_b]
 
-    def handle_MUL(self, opr1, opr2):
-        self.alu("MUL", opr1, opr2)
-        inc_size = 3
+    def handle_MUL(self, reg_a, reg_b):
+        self.reg[reg_a] *= self.reg[reg_b]
 
     def handle_PUSH(self, opr1, opr2):
-        val = self.reg[opr1]
-        self.reg[self.sp] -= 1
-        self.ram_write(val, self.reg[self.sp])
-        inc_size = 2
+        self.reg[7] -= 1
+        num = self.reg[opr1]
+        self.ram_write(num, self.reg[7])
 
     def handle_POP(self, opr1, opr2):
-        val = self.ram_read(self.reg[SP])
-        self.reg[SP] += 1
-        self.reg[opr1] = val
-        inc_size = 2
+        num = self.ram_read(self.reg[7])
+        self.reg[opr1] = num
+        self.reg[7] += 1
 
     def handle_RET(self, opr1, opr2):
-        return_address = self.ram_read(self.reg[self.SP])
-        self.reg[self.SP] += 1
+        return_address = self.ram_read(self.reg[7])
+        self.reg[7] += 1
         self.pc = return_address
 
     def handle_CALL(self, opr1, opr2):
-        self.reg[self.SP] -= 1
-        self.ram[self.reg[self.SP]] = self.pc + 2
-        self.pc = self.reg[opr1]
-        self.halted = True
-        inc_size = 2
+        self.reg[7] -= 1
+        self.ram_write(self.pc + 2, self.reg[7])
+        num = self.reg[opr1]
+        self.pc = num
